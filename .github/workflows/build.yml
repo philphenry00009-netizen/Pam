@@ -1,10 +1,13 @@
 # .github/workflows/build.yml
-name: Build Pam APK
+name: Build and Release Fcam2 APK
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -30,24 +33,25 @@ jobs:
             sed -i 's/apertures\.indexOf(/apertures.toList().indexOf(/g' {} +
           grep -R "apertures\.indexOf" -n unpacked || echo "Patch applied – no raw indexOf left."
 
-      # 4️⃣ Rename the app to "Pam" (Fixed path matching)
+      # 4️⃣ Rename app label to "Fcam2" in Manifest and strings.xml
       - name: Update app name
         run: |
+          find unpacked -name "AndroidManifest.xml" -exec \
+            sed -i 's/android:label="[^"]*"/android:label="Fcam2"/g' {} +
+
           STRINGS_FILE=$(find unpacked -path "*/src/main/res/values/strings.xml" | head -n1)
           if [ -n "$STRINGS_FILE" ]; then
-            echo "Renaming app name in $STRINGS_FILE"
-            sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Pam<\/string>/g' "$STRINGS_FILE"
-          else
-            echo "Warning: strings.xml not found at expected path."
+            echo "Renaming app_name in $STRINGS_FILE"
+            sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Fcam2<\/string>/g' "$STRINGS_FILE"
           fi
 
-      # 5️⃣ Install Java (Temurin 17) – required for Gradle
+      # 5️⃣ Install Java (Temurin 17)
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # 6️⃣ Accept Android SDK licences quietly
+      # 6️⃣ Accept Android SDK licences
       - name: Accept Android licences
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
@@ -57,19 +61,31 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      # 8️⃣ Build the APK (debug variant)
+      # 8️⃣ Build the APK
       - name: Build APK
         run: gradle -p "$PROJECT_DIR" --no-daemon assembleDebug
 
-      # 9️⃣ Rename the generated APK
+      # 9️⃣ Rename the generated APK to Fcam2.apk
       - name: Rename APK
         run: |
           OLD_APK=$(find unpacked -type f -name '*-debug.apk' | head -n1)
-          mv "$OLD_APK" "${{ env.PROJECT_DIR }}/Pam.apk"
+          mv "$OLD_APK" "${{ env.PROJECT_DIR }}/Fcam2.apk"
 
-      # 🔀 Upload the finished APK as an artifact
+      # 🔟 Upload artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Pam-apk
-          path: ${{ env.PROJECT_DIR }}/Pam.apk
+          name: Fcam2-apk
+          path: ${{ env.PROJECT_DIR }}/Fcam2.apk
+
+      # 1️⃣1️⃣ Create Public GitHub Release
+      - name: Create Public Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: "Fcam2 Release v1.0.0"
+          body: "Public release of **Fcam2.apk**."
+          files: ${{ env.PROJECT_DIR }}/Fcam2.apk
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
