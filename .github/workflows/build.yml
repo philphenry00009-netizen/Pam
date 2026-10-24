@@ -1,5 +1,5 @@
 # .github/workflows/build.yml
-name: Build and Release Fcam2 APK
+name: Build and Release Obfuscated Fcam2 APK
 
 on:
   push:
@@ -33,7 +33,7 @@ jobs:
             sed -i 's/apertures\.indexOf(/apertures.toList().indexOf(/g' {} +
           grep -R "apertures\.indexOf" -n unpacked || echo "Patch applied – no raw indexOf left."
 
-      # 4️⃣ Rename app label to "Fcam2" in Manifest and strings.xml
+      # 4️⃣ Update App Label to "Fcam2"
       - name: Update app name
         run: |
           find unpacked -name "AndroidManifest.xml" -exec \
@@ -45,46 +45,85 @@ jobs:
             sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Fcam2<\/string>/g' "$STRINGS_FILE"
           fi
 
-      # 5️⃣ Install Java (Temurin 17)
+      # 5️⃣ Enable ProGuard / R8 Obfuscation dynamically in app/build.gradle.kts
+      - name: Configure R8 Obfuscation & ProGuard
+        run: |
+          BUILD_GRADLE=$(find unpacked -path "*/app/build.gradle.kts" | head -n1)
+          APP_DIR=$(dirname "$BUILD_GRADLE")
+          
+          # Inject ProGuard Rules file
+          cat << 'EOF' > "$APP_DIR/proguard-rules.pro"
+          -optimizationpasses 5
+          -allowaccessmodification
+          -dontusemixedcaseclassnames
+          -dontskipnonpubliclibraryclasses
+          -verbose
+          -keepattributes SourceFile,LineNumberTable,*Annotation*,Signature,InnerClasses,EnclosingMethod
+          -keep class kotlin.Metadata { *; }
+          -keep class android.hardware.camera2.** { *; }
+          -keep interface android.hardware.camera2.** { *; }
+          -keep class android.view.Surface { *; }
+          -keep class android.view.TextureView$SurfaceTextureListener { *; }
+          -keep interface android.view.SurfaceHolder$Callback { *; }
+          -keep public class * extends android.view.View {
+              public <init>(android.content.Context);
+              public <init>(android.content.Context, android.util AttributeSet);
+              public <init>(android.content.Context, android.util AttributeSet, int);
+              public void set*(...);
+          }
+          -keep public class * extends android.app.Activity
+          -keep class com.google.mlkit.** { *; }
+          -keep interface com.google.mlkit.** { *; }
+          -dontwarn com.google.mlkit.**
+          -keepclassmembers class * {
+              @kotlin.jvm.JvmField *;
+          }
+          -dontwarn kotlinx.coroutines.**
+          EOF
+
+          # Enable R8 Obfuscation and Debug Signing for assembleRelease
+          sed -i 's/isMinifyEnabled = false/isMinifyEnabled = true\n            isShrinkResources = true\n            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")\n            signingConfig = signingConfigs.getByName("debug")/g' "$BUILD_GRADLE"
+
+      # 6️⃣ Install Java (Temurin 17)
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # 6️⃣ Accept Android SDK licences
+      # 7️⃣ Accept Android SDK licences
       - name: Accept Android licences
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
 
-      # 7️⃣ Gradle 8.7
+      # 8️⃣ Gradle 8.7
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      # 8️⃣ Build the APK
-      - name: Build APK
-        run: gradle -p "$PROJECT_DIR" --no-daemon assembleDebug
+      # 9️⃣ Build Obfuscated Release APK
+      - name: Build Obfuscated Release APK
+        run: gradle -p "$PROJECT_DIR" --no-daemon assembleRelease
 
-      # 9️⃣ Rename the generated APK to Fcam2.apk
+      # 🔟 Rename the generated release APK to Fcam2.apk
       - name: Rename APK
         run: |
-          OLD_APK=$(find unpacked -type f -name '*-debug.apk' | head -n1)
-          mv "$OLD_APK" "${{ env.PROJECT_DIR }}/Fcam2.apk"
+          RELEASE_APK=$(find unpacked -type f -name '*-release.apk' -o -name '*-release-unsigned.apk' | head -n1)
+          mv "$RELEASE_APK" "${{ env.PROJECT_DIR }}/Fcam2.apk"
 
-      # 🔟 Upload artifact
+      # 1️⃣1️⃣ Upload artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fcam2-apk
+          name: Fcam2-obfuscated-apk
           path: ${{ env.PROJECT_DIR }}/Fcam2.apk
 
-      # 1️⃣1️⃣ Create Public GitHub Release
+      # 1️⃣2️⃣ Publish to Public GitHub Release
       - name: Create Public Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: "Fcam2 Release v1.0.0"
-          body: "Public release of **Fcam2.apk**."
+          tag_name: v1.1.0
+          name: "Fcam2 Obfuscated Release v1.1.0"
+          body: "Secured & Obfuscated release of **Fcam2.apk** using R8/ProGuard."
           files: ${{ env.PROJECT_DIR }}/Fcam2.apk
           make_latest: true
         env:
