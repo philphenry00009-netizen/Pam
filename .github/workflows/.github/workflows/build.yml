@@ -30,12 +30,16 @@ jobs:
             sed -i 's/apertures\.indexOf(/apertures.toList().indexOf(/g' {} +
           grep -R "apertures\.indexOf" -n unpacked || echo "Patch applied – no raw indexOf left."
 
-      # 4️⃣ Rename the app to "Pam"
+      # 4️⃣ Rename the app to "Pam" (Fixed path matching)
       - name: Update app name
         run: |
-          STRINGS_FILE=$(find unpacked -name strings.xml | grep "src/main/res/values/strings.xml" | head -n1)
-          [ -n "$STRINGS_FILE" ] && \
+          STRINGS_FILE=$(find unpacked -path "*/src/main/res/values/strings.xml" | head -n1)
+          if [ -n "$STRINGS_FILE" ]; then
+            echo "Renaming app name in $STRINGS_FILE"
             sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Pam<\/string>/g' "$STRINGS_FILE"
+          else
+            echo "Warning: strings.xml not found at expected path."
+          fi
 
       # 5️⃣ Install Java (Temurin 17) – required for Gradle
       - uses: actions/setup-java@v4
