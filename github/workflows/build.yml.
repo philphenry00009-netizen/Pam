@@ -1,0 +1,71 @@
+# .github/workflows/build.yml
+name: Build Pam APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ Checkout the repo
+      - uses: actions/checkout@v4
+
+      # 2️⃣ Locate the ZIP, unzip it, identify the Android project root
+      - name: Find and unzip project
+        run: |
+          ZIP=$(find . -maxdepth 3 -iname '*.zip' | head -n1)
+          echo "Using zip: $ZIP"
+          unzip -o -q "$ZIP" -d unpacked
+          SETTINGS=$(find unpacked -name settings.gradle* | head -n1)
+          echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
+
+      # 3️⃣ Auto-patch the Kotlin compile-error
+      - name: Apply Kotlin compile-fix
+        run: |
+          find unpacked -name '*.kt' -exec \
+            sed -i 's/apertures\.indexOf(/apertures.toList().indexOf(/g' {} +
+          grep -R "apertures\.indexOf" -n unpacked || echo "Patch applied – no raw indexOf left."
+
+      # 4️⃣ Rename the app to "Pam"
+      - name: Update app name
+        run: |
+          STRINGS_FILE=$(find unpacked -name strings.xml | grep "src/main/res/values/strings.xml" | head -n1)
+          [ -n "$STRINGS_FILE" ] && \
+            sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">Pam<\/string>/g' "$STRINGS_FILE"
+
+      # 5️⃣ Install Java (Temurin 17) – required for Gradle
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 6️⃣ Accept Android SDK licences quietly
+      - name: Accept Android licences
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+
+      # 7️⃣ Gradle 8.7
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      # 8️⃣ Build the APK (debug variant)
+      - name: Build APK
+        run: gradle -p "$PROJECT_DIR" --no-daemon assembleDebug
+
+      # 9️⃣ Rename the generated APK
+      - name: Rename APK
+        run: |
+          OLD_APK=$(find unpacked -type f -name '*-debug.apk' | head -n1)
+          mv "$OLD_APK" "${{ env.PROJECT_DIR }}/Pam.apk"
+
+      # 🔀 Upload the finished APK as an artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pam-apk
+          path: ${{ env.PROJECT_DIR }}/Pam.apk
